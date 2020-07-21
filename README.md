@@ -1,2 +1,3 @@
 # theia-update-plugins
-update theia plugins
+
+check and update theia plugins
