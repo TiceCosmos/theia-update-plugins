@@ -1,10 +1,8 @@
-use easy_http_request::DefaultHttpRequest;
+// use easy_http_request::DefaultHttpRequest;
 use log::debug;
-use std::num::ParseIntError;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::{fmt, fs, io};
-use zip::ZipArchive;
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Version {
@@ -18,7 +16,7 @@ impl fmt::Display for Version {
     }
 }
 impl FromStr for Version {
-    type Err = ParseIntError;
+    type Err = std::num::ParseIntError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut iter = s.split('.');
@@ -31,6 +29,7 @@ impl FromStr for Version {
 }
 
 /// Theia plugins
+#[derive(Clone)]
 pub struct TheiaPlugin {
     api: TheiaPluginAPI,
     dir: PathBuf,
@@ -47,9 +46,11 @@ impl TheiaPlugin {
             dir: theia_dir.as_ref().into(),
         }
     }
-    pub fn get_last_version<T: AsRef<str>>(&self, path: T) -> Result<(Version, String), String> {
-        self.api.get_last_version(path)
+    /// get lastest version from http url
+    pub async fn get_last_version<T: AsRef<str>>(&self, path: T) -> Result<(Version, String), String> {
+        self.api.last_version(path).await
     }
+    /// get version information in extension.vsixmanifest
     pub fn get_install_info<T: AsRef<Path>>(&self, name: T) -> Result<Option<Version>, String> {
         let content = match fs::read_to_string(self.dir.join(name).join("extension.vsixmanifest")) {
             Ok(x) => x,
@@ -82,56 +83,66 @@ impl TheiaPlugin {
         }
         Err("extension.vsixmanifest: not find Identity.Version".into())
     }
-    pub fn upgrade<P: AsRef<Path>, S: AsRef<str>>(&self, name: P, url: S) -> Result<(), String> {
+    pub async fn upgrade<P: AsRef<Path>, S: AsRef<str>>(&self, name: P, url: S) -> Result<(), String> {
         let url = url.as_ref();
         let target = self.dir.join(name);
 
-        let file = Self::download(url).map_err(|e| format!("{}, download: {}", url, e))?;
-        let file = io::Cursor::new(file);
+        let data = Self::download(url).await.map_err(|e| format!("{}, {}", url, e))?;
 
-        let mut archive = ZipArchive::new(file).map_err(|e| format!("{}, read file: {}", url, e))?;
+        Self::decompress(target, data).map_err(|e| format!("{}, {}", url, e))
+    }
+    /// download vsix file from url
+    async fn download<T: AsRef<str>>(url: T) -> Result<bytes::Bytes, String> {
+        let url = url.as_ref();
+        let request = reqwest::get(url).await.map_err(|e| e.to_string())?;
+        if request.status() != reqwest::StatusCode::OK {
+            return Err(format!("status_code: {:?}", request.status()));
+        }
+        let head = request.headers();
+        let content_type = head.get("content-type").ok_or("content-type: not find")?;
+        if content_type != "application/octet-stream" {
+            return Err(format!("content-type: {:?}", content_type));
+        }
+        request.bytes().await.map_err(|e| format!("body: {}", e))
+    }
+    /// decompress from bytes::Bytes, create or rewrite file in target
+    fn decompress<T: AsRef<Path>>(target: T, data: bytes::Bytes) -> Result<(), String> {
+        use zip::ZipArchive;
+
+        let target = target.as_ref();
+        let reader = io::Cursor::new(data);
+
+        let mut archive = ZipArchive::new(reader).map_err(|e| format!("read zip archive: {}", e))?;
+
         for i in 0..archive.len() {
             if let Ok(mut file) = archive.by_index(i) {
                 if file.is_file() {
                     let file_path = target.join(file.name());
                     // Create parent dir
-                    let file_dir = file_path.parent().ok_or(format!("{}, not get directory", url))?;
-                    fs::create_dir_all(&file_dir).map_err(|e| format!("{}, create dir: {}", url, e))?;
+                    let file_dir = file_path.parent().ok_or("not parent directory")?;
+                    fs::create_dir_all(&file_dir).map_err(|e| format!("create dir: {}", e))?;
                     // Write file
-                    let mut outfile =
-                        fs::File::create(&file_path).map_err(|e| format!("{}, write file: {}", url, e))?;
-                    io::copy(&mut file, &mut outfile).map_err(|e| format!("{}, write file: {}", url, e))?;
+                    let mut outfile = fs::File::create(&file_path).map_err(|e| format!("write file: {}", e))?;
+                    io::copy(&mut file, &mut outfile).map_err(|e| format!("write file: {}", e))?;
                     // Get and Set permissions
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::PermissionsExt;
                         if let Some(mode) = file.unix_mode() {
                             fs::set_permissions(&file_path, fs::Permissions::from_mode(mode))
-                                .map_err(|e| format!("{}, set permission: {}", url, e))?;
+                                .map_err(|e| format!("set permission: {}", e))?;
                         }
                     }
                 }
             }
         }
+
         Ok(())
-    }
-    fn download<T: AsRef<str>>(url: T) -> Result<Vec<u8>, String> {
-        let url = url.as_ref();
-        let request = DefaultHttpRequest::get_from_url_str(url).map_err(|e| e.to_string())?;
-        let response = request.send().map_err(|e| e.to_string())?;
-        if response.status_code != 200 {
-            return Err(format!("status_code: {:?}", response.status_code));
-        }
-        let content_type = response.headers.get("content-type").ok_or("content-type: not find")?;
-        if content_type == "application/octet-stream" {
-            Ok(response.body)
-        } else {
-            Err(format!("content-type: {}", content_type))
-        }
     }
 }
 
 /// Theia plugins HTTP API
+#[derive(Clone)]
 struct TheiaPluginAPI {
     prefix: String,
     version: Vec<String>,
@@ -145,26 +156,26 @@ impl TheiaPluginAPI {
             download: download.as_ref().split('.').map(|x| x.into()).collect(),
         }
     }
-    fn get_last_version<T: AsRef<str>>(&self, path: T) -> Result<(Version, String), String> {
-        let path = self.prefix.clone() + path.as_ref();
-        let request =
-            DefaultHttpRequest::get_from_url_str(&path).map_err(|e| format!("{}, {}", path, e.to_string()))?;
-        let response = request.send().map_err(|e| format!("{}, {}", path, e.to_string()))?;
-        if response.status_code != 200 {
-            return Err(format!("{}, status_code: {:?}", path, response.status_code));
-        }
-        let content_type = response
-            .headers
-            .get("content-type")
-            .ok_or(format!("{}, content-type: not find", path))?;
-        match content_type.as_ref() {
-            "application/json" => self.parse_json(response.body).map_err(|e| format!("path, body: {}", e)),
-            _ => Err(format!("{}, content-type: {}", path, content_type)),
-        }
+    async fn last_version<T: AsRef<str>>(&self, path: T) -> Result<(Version, String), String> {
+        let url = self.prefix.clone() + path.as_ref();
+        self.from_url(&url).await.map_err(|e| format!("{}, {}", url, e))
     }
-    fn parse_json(&self, body: Vec<u8>) -> Result<(Version, String), String> {
-        let body = String::from_utf8(body).map_err(|e| e.to_string())?;
-        let json = body.parse::<serde_json::Value>().map_err(|e| e.to_string())?;
+    async fn from_url<T: AsRef<str>>(&self, url: T) -> Result<(Version, String), String> {
+        let url = url.as_ref();
+        let request = reqwest::get(url).await.map_err(|e| e.to_string())?;
+        if request.status() != reqwest::StatusCode::OK {
+            return Err(format!("status_code: {:?}", request.status()));
+        }
+        let head = request.headers();
+        let content_type = head.get("content-type").ok_or("content-type: not find")?;
+        if content_type != "application/json" {
+            return Err(format!("content-type: {:?}", content_type));
+        }
+        let body = request.bytes().await.map_err(|e| format!("body: {}", e))?;
+        self.parse_json(&body).map_err(|e| format!("body: {}", e))
+    }
+    fn parse_json(&self, body: &[u8]) -> Result<(Version, String), String> {
+        let json: serde_json::Value = serde_json::from_slice(body).map_err(|e| e.to_string())?;
         let mut version = &json;
         for item in self.version.iter() {
             version = match version.get(item) {
@@ -179,9 +190,9 @@ impl TheiaPluginAPI {
                 None => return Err("not find download".into()),
             };
         }
-        let version = version.as_str().ok_or("not find version")?;
-        let version = version.parse().map_err(|e| format!("not parse version, {}", e))?;
-        let download = download.as_str().ok_or("not find download")?;
+        let version = version.as_str().ok_or("version error")?;
+        let version = version.parse().map_err(|e| format!("version error, {}", e))?;
+        let download = download.as_str().ok_or("download error")?;
         Ok((version, download.to_owned()))
     }
 }

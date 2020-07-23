@@ -5,6 +5,7 @@ use log::{info, warn};
 use std::path::PathBuf;
 use std::{env, fs};
 use structopt::StructOpt;
+use tokio::task;
 
 #[derive(StructOpt, Debug)]
 #[structopt()]
@@ -17,7 +18,8 @@ struct Opt {
     target: PathBuf,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
     let theia_root = PathBuf::from(env::var("HOME")?).join(".theia");
@@ -51,37 +53,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
-        let download_plugin = |name, download| {
-            info!("download form {}", download);
-            if let Err(e) = plugin.upgrade(name, download) {
-                warn!("{}", e);
-            }
-        };
-
         let null_table = toml::value::Table::new();
         let download_list = table.get("list").and_then(|x| x.as_table()).unwrap_or(&null_table);
 
+        let mut future_list = vec![];
         for (name, path) in download_list
             .into_iter()
             .filter_map(|(name, path)| path.as_str().map(|path| (name, path)))
         {
-            let prefix = format!("from {} get {}", domain, name);
-            match (plugin.get_install_info(name), plugin.get_last_version(path)) {
-                (Ok(Some(version_old)), Ok((version_new, _))) if version_old == version_new => {
-                    info!("{}, latest is {}", prefix, version_new);
-                }
-                (Ok(Some(version_old)), Ok((version_new, download))) => {
-                    info!("{}, upgrade {} to {}", prefix, version_old, version_new);
-                    download_plugin(name, download);
-                }
-                (Ok(None), Ok((version_new, download))) => {
-                    info!("{}, install {}", prefix, version_new);
-                    download_plugin(name, download);
-                }
-                (Err(e), _) | (_, Err(e)) => warn!("{}, {}", prefix, e),
-            }
+            future_list.push(task::spawn(upgrade(
+                plugin.clone(),
+                format!("from {} get {}", domain, name),
+                name.to_owned(),
+                path.to_owned(),
+            )));
+        }
+        for item in future_list {
+            item.await.ok();
         }
     }
-
     Ok(())
+}
+
+async fn upgrade(plugin: TheiaPlugin, prefix: String, name: String, path: String) {
+    let version_old = match plugin.get_install_info(&name) {
+        Ok(x) => x,
+        Err(e) => {
+            warn!("{}, {}", prefix, e);
+            return;
+        }
+    };
+    let (version_new, download) = match plugin.get_last_version(path).await {
+        Ok(x) => x,
+        Err(e) => {
+            warn!("{}, {}", prefix, e);
+            return;
+        }
+    };
+    match version_old {
+        Some(version_old) if version_old == version_new => {
+            info!("{}, latest is {}", prefix, version_new);
+            return;
+        }
+        Some(version_old) => info!("{}, upgrade {} to {}", prefix, version_old, version_new),
+        None => info!("{}, install {}", prefix, version_new),
+    }
+    info!("download form {}", download);
+    if let Err(e) = plugin.upgrade(name, download).await {
+        warn!("{}", e);
+    }
 }
