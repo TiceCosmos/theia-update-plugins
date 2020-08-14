@@ -1,4 +1,3 @@
-// use easy_http_request::DefaultHttpRequest;
 use log::debug;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -87,26 +86,15 @@ impl TheiaPlugin {
         let url = url.as_ref();
         let target = self.dir.join(name);
 
-        let data = Self::download(url).await.map_err(|e| format!("{}, {}", url, e))?;
+        let data = surf::get(url)
+            .recv_bytes()
+            .await
+            .map_err(|e| format!("{}, {}", url, e))?;
 
-        Self::decompress(target, data).map_err(|e| format!("{}, {}", url, e))
-    }
-    /// download vsix file from url
-    async fn download<T: AsRef<str>>(url: T) -> Result<bytes::Bytes, String> {
-        let url = url.as_ref();
-        let request = reqwest::get(url).await.map_err(|e| e.to_string())?;
-        if request.status() != reqwest::StatusCode::OK {
-            return Err(format!("status_code: {:?}", request.status()));
-        }
-        let head = request.headers();
-        let content_type = head.get("content-type").ok_or("content-type: not find")?;
-        if content_type != "application/octet-stream" {
-            return Err(format!("content-type: {:?}", content_type));
-        }
-        request.bytes().await.map_err(|e| format!("body: {}", e))
+        Self::decompress(target, &data)
     }
     /// decompress from bytes::Bytes, create or rewrite file in target
-    fn decompress<T: AsRef<Path>>(target: T, data: bytes::Bytes) -> Result<(), String> {
+    fn decompress<T: AsRef<Path>>(target: T, data: &[u8]) -> Result<(), String> {
         use zip::ZipArchive;
 
         let target = target.as_ref();
@@ -158,21 +146,11 @@ impl TheiaPluginAPI {
     }
     async fn last_version<T: AsRef<str>>(&self, path: T) -> Result<(Version, String), String> {
         let url = self.prefix.clone() + path.as_ref();
-        self.from_url(&url).await.map_err(|e| format!("{}, {}", url, e))
-    }
-    async fn from_url<T: AsRef<str>>(&self, url: T) -> Result<(Version, String), String> {
-        let url = url.as_ref();
-        let request = reqwest::get(url).await.map_err(|e| e.to_string())?;
-        if request.status() != reqwest::StatusCode::OK {
-            return Err(format!("status_code: {:?}", request.status()));
-        }
-        let head = request.headers();
-        let content_type = head.get("content-type").ok_or("content-type: not find")?;
-        if content_type != "application/json" {
-            return Err(format!("content-type: {:?}", content_type));
-        }
-        let body = request.bytes().await.map_err(|e| format!("body: {}", e))?;
-        self.parse_json(&body).map_err(|e| format!("body: {}", e))
+        let request = surf::get(&url)
+            .recv_bytes()
+            .await
+            .map_err(|e| format!("{}, {}", url, e))?;
+        self.parse_json(&request).map_err(|e| format!("{}, {}", url, e))
     }
     fn parse_json(&self, body: &[u8]) -> Result<(Version, String), String> {
         let json: serde_json::Value = serde_json::from_slice(body).map_err(|e| e.to_string())?;

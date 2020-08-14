@@ -1,11 +1,12 @@
 mod lib;
 use lib::*;
 
+use async_std::task;
+use futures::future::join_all;
 use log::{info, warn};
 use std::path::PathBuf;
 use std::{env, fs};
 use structopt::StructOpt;
-use tokio::task;
 
 #[derive(StructOpt, Debug)]
 #[structopt()]
@@ -18,8 +19,7 @@ struct Opt {
     target: PathBuf,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
     let theia_root = PathBuf::from(env::var("HOME")?).join(".theia");
@@ -68,9 +68,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 path.to_owned(),
             )));
         }
-        for item in future_list {
-            item.await.ok();
-        }
+        task::block_on(async {
+            join_all(future_list).await;
+        })
     }
     Ok(())
 }
