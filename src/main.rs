@@ -2,8 +2,10 @@ mod lib;
 use lib::*;
 
 use async_std::task;
+use env_logger::Builder;
 use futures::future::join_all;
 use log::{info, warn};
+use std::io::Write;
 use std::path::PathBuf;
 use std::{env, fs};
 use structopt::StructOpt;
@@ -20,7 +22,17 @@ struct Opt {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::init();
+    Builder::from_default_env()
+        .format(|buf, record| {
+            writeln!(
+                buf,
+                "{} [{}] - {}",
+                chrono::Local::now().format("%FT%T"),
+                buf.default_styled_level(record.level()),
+                record.args()
+            )
+        })
+        .init();
 
     let theia_root = PathBuf::from(env::var("HOME")?).join(".theia");
 
