@@ -3,7 +3,7 @@ use lib::*;
 
 use async_std::task;
 use env_logger::Builder;
-use futures::future::join_all;
+use futures::future;
 use log::{debug, info, warn};
 use std::io::Write;
 use std::path::PathBuf;
@@ -79,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     task::block_on(async {
-        for warn in join_all(future_list).await {
+        for warn in future::join_all(future_list).await {
             if let Err(warn) = warn {
                 warn!("{}", warn);
             }
@@ -92,9 +92,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn upgrade(plugin: TheiaPlugin, domain: String, name: String, path: String) -> Result<(), String> {
     let prefix = format!("from {} get {}, ", domain, name);
 
-    let version_old = plugin.get_install_info(&name).map_err(|e| prefix.clone() + &e)?;
+    let (version_old, version_new) = future::join(plugin.get_install_info(&name), plugin.get_last_version(path)).await;
 
-    let (version_new, download) = plugin.get_last_version(path).await.map_err(|e| prefix.clone() + &e)?;
+    let version_old = version_old.map_err(|e| prefix.clone() + &e)?;
+    let (version_new, download) = version_new.map_err(|e| prefix.clone() + &e)?;
 
     if version_old.as_ref() == Some(&version_new) {
         debug!("{}, latest is {}", prefix, version_new);

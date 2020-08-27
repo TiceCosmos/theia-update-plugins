@@ -1,7 +1,8 @@
+use async_std::fs;
 use log::debug;
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::{fmt, fs, io};
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Version {
@@ -50,8 +51,8 @@ impl TheiaPlugin {
         self.api.last_version(path).await
     }
     /// get version information in extension.vsixmanifest
-    pub fn get_install_info<T: AsRef<Path>>(&self, name: T) -> Result<Option<Version>, String> {
-        let content = match fs::read_to_string(self.dir.join(name).join("extension.vsixmanifest")) {
+    pub async fn get_install_info<T: AsRef<Path>>(&self, name: T) -> Result<Option<Version>, String> {
+        let content = match fs::read_to_string(self.dir.join(&name).join("extension.vsixmanifest")).await {
             Ok(x) => x,
             Err(_) => return Ok(None),
         };
@@ -98,7 +99,7 @@ impl TheiaPlugin {
         use zip::ZipArchive;
 
         let target = target.as_ref();
-        let reader = io::Cursor::new(data);
+        let reader = std::io::Cursor::new(data);
 
         let mut archive = ZipArchive::new(reader).map_err(|e| format!("read zip archive: {}", e))?;
 
@@ -108,16 +109,18 @@ impl TheiaPlugin {
                     let file_path = target.join(file.name());
                     // Create parent dir
                     let file_dir = file_path.parent().ok_or("not parent directory")?;
-                    fs::create_dir_all(&file_dir).map_err(|e| format!("create dir: {}", e))?;
+                    std::fs::create_dir_all(&file_dir).map_err(|e| format!("create dir: {}", e))?;
                     // Write file
-                    let mut outfile = fs::File::create(&file_path).map_err(|e| format!("write file: {}", e))?;
-                    io::copy(&mut file, &mut outfile).map_err(|e| format!("write file: {}", e))?;
+                    let mut outfile = std::fs::File::create(&file_path)
+                        // .await
+                        .map_err(|e| format!("write file: {}", e))?;
+                    std::io::copy(&mut file, &mut outfile).map_err(|e| format!("write file: {}", e))?;
                     // Get and Set permissions
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::PermissionsExt;
                         if let Some(mode) = file.unix_mode() {
-                            fs::set_permissions(&file_path, fs::Permissions::from_mode(mode))
+                            std::fs::set_permissions(&file_path, fs::Permissions::from_mode(mode))
                                 .map_err(|e| format!("set permission: {}", e))?;
                         }
                     }
