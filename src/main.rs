@@ -2,6 +2,7 @@ mod lib;
 use lib::*;
 
 use async_std::task;
+use chrono::Local;
 use env_logger::Builder;
 use futures::future;
 use log::{debug, info, warn};
@@ -27,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             writeln!(
                 buf,
                 "{} [{}] - {}",
-                chrono::Local::now().format("%FT%T"),
+                Local::now().format("%FT%T"),
                 buf.default_styled_level(record.level()),
                 record.args()
             )
