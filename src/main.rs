@@ -6,9 +6,12 @@ use chrono::Local;
 use env_logger::Builder;
 use futures::future;
 use log::{debug, info, warn};
-use std::io::Write;
-use std::path::PathBuf;
-use std::{env, fs};
+use std::{
+    error,
+    io::Write,
+    path::PathBuf,
+    {env, fs},
+};
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
@@ -22,7 +25,7 @@ struct Opt {
     target: PathBuf,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn error::Error>> {
     Builder::from_default_env()
         .format(|buf, record| {
             writeln!(
@@ -75,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .into_iter()
             .filter_map(|(name, path)| path.as_str().map(|path| (name.to_owned(), path.to_owned())))
         {
-            future_list.push(task::spawn(upgrade(plugin.clone(), domain.clone(), name, path)));
+            future_list.push(task::spawn(upgrade(plugin.clone(), name, path)));
         }
     }
 
@@ -90,8 +93,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn upgrade(plugin: TheiaPlugin, domain: String, name: String, path: String) -> Result<(), String> {
-    let prefix = format!("from {} get {}, ", domain, name);
+async fn upgrade(plugin: TheiaPlugin, name: String, path: String) -> Result<(), String> {
+    let prefix = format!("{}: ", name);
 
     let (version_old, version_new) = future::join(plugin.get_install_info(&name), plugin.get_last_version(path)).await;
 
@@ -99,7 +102,7 @@ async fn upgrade(plugin: TheiaPlugin, domain: String, name: String, path: String
     let (version_new, download) = version_new.map_err(|e| prefix.clone() + &e)?;
 
     if version_old.as_ref() == Some(&version_new) {
-        debug!("{}, latest is {}", prefix, version_new);
+        debug!("{}latest {} is installed", prefix, version_new);
         return Ok(());
     }
 

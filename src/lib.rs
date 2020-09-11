@@ -1,8 +1,11 @@
 use async_std::fs;
 use log::debug;
-use std::fmt;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
+use std::{
+    fmt, io,
+    num::ParseIntError,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Version {
@@ -16,7 +19,7 @@ impl fmt::Display for Version {
     }
 }
 impl FromStr for Version {
-    type Err = std::num::ParseIntError;
+    type Err = ParseIntError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut iter = s.split('.');
@@ -99,7 +102,7 @@ impl TheiaPlugin {
         use zip::ZipArchive;
 
         let target = target.as_ref();
-        let reader = std::io::Cursor::new(data);
+        let reader = io::Cursor::new(data);
 
         let mut archive = ZipArchive::new(reader).map_err(|e| format!("read zip archive: {}", e))?;
 
@@ -108,13 +111,10 @@ impl TheiaPlugin {
                 if file.is_file() {
                     let file_path = target.join(file.name());
                     // Create parent dir
-                    let file_dir = file_path.parent().ok_or("not parent directory")?;
-                    std::fs::create_dir_all(&file_dir).map_err(|e| format!("create dir: {}", e))?;
+                    file_path.parent().and_then(|x| std::fs::create_dir_all(x).ok());
                     // Write file
-                    let mut outfile = std::fs::File::create(&file_path)
-                        // .await
-                        .map_err(|e| format!("write file: {}", e))?;
-                    std::io::copy(&mut file, &mut outfile).map_err(|e| format!("write file: {}", e))?;
+                    let mut outfile = std::fs::File::create(&file_path).map_err(|e| format!("write file: {}", e))?;
+                    io::copy(&mut file, &mut outfile).map_err(|e| format!("write file: {}", e))?;
                     // Get and Set permissions
                     #[cfg(unix)]
                     {
