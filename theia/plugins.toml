@@ -1,7 +1,15 @@
-[open-vsx]
-prefix = "https://open-vsx.org/api/"
+[openvsx]
+regular = "https://open-vsx.org/api/"
 version = "version"
 download = "files.download"
 
-[open-vsx.list]
-vscode-typescript = "vscode/typescript"
+[openvsx.list]
+rust = "rust-lang/rust"
+
+[github]
+regular = "https://api.github.com/repos/$$/releases/latest"
+version = "tag_name"
+download = "assets.browser_download_url"
+
+[github.list]
+openscad = "Antyos/vscode-openscad"

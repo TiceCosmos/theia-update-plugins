@@ -24,7 +24,10 @@ impl FromStr for Version {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut iter = s.split('.');
         let (major, minor, patch) = match (iter.next(), iter.next(), iter.next()) {
-            (Some(major), Some(minor), Some(patch)) => (major.parse()?, minor.parse()?, patch.parse()?),
+            (Some(major), Some(minor), Some(patch)) => {
+                let major = major.chars().filter(|x| x.is_ascii_digit()).collect::<String>();
+                (major.parse()?, minor.parse()?, patch.parse()?)
+            }
             _ => (0, 0, 0),
         };
         Ok(Self { major, minor, patch })
@@ -39,13 +42,13 @@ pub struct TheiaPlugin {
 }
 impl TheiaPlugin {
     pub fn new<P: AsRef<Path>, S: AsRef<str>>(
-        prefix: S,    // http api prefix
+        regular: S,   // http api regular
         version: S,   // find version info from json file
         download: S,  // find download url from json file
         theia_dir: P, // theia plugins dir
     ) -> Self {
         Self {
-            api: TheiaPluginAPI::new(prefix, version, download),
+            api: TheiaPluginAPI::new(regular, version, download),
             dir: theia_dir.as_ref().into(),
         }
     }
@@ -90,8 +93,10 @@ impl TheiaPlugin {
         let url = url.as_ref();
         let target = self.dir.join(name);
 
-        let data = surf::get(url)
-            .recv_bytes()
+        let request = surf::get(url);
+        let client = surf::client().with(surf::middleware::Redirect::default());
+        let data = client
+            .recv_bytes(request)
             .await
             .map_err(|e| format!("{}, {}", url, e))?;
 
@@ -104,7 +109,16 @@ impl TheiaPlugin {
         let target = target.as_ref();
         let reader = io::Cursor::new(data);
 
-        let mut archive = ZipArchive::new(reader).map_err(|e| format!("read zip archive: {}", e))?;
+        let mut archive = match ZipArchive::new(reader) {
+            Ok(x) => x,
+            Err(e) => {
+                if let Some(file_name) = target.file_name().and_then(|x| x.to_str()) {
+                    let file_path = format!("/tmp/{}.vsix", file_name);
+                    std::fs::write(file_path, data).ok();
+                }
+                return Err(format!("read zip archive: {}", e));
+            }
+        };
 
         for i in 0..archive.len() {
             if let Ok(mut file) = archive.by_index(i) {
@@ -136,19 +150,24 @@ impl TheiaPlugin {
 #[derive(Clone)]
 struct TheiaPluginAPI {
     prefix: String,
+    suffix: String,
     version: Vec<String>,
     download: Vec<String>,
 }
 impl TheiaPluginAPI {
-    fn new<T: AsRef<str>>(prefix: T, version: T, download: T) -> Self {
+    fn new<T: AsRef<str>>(regular: T, version: T, download: T) -> Self {
+        let mut split = regular.as_ref().splitn(2, "$$");
+        let prefix = split.next().unwrap_or_default();
+        let suffix = split.next().unwrap_or_default();
         Self {
-            prefix: prefix.as_ref().to_owned(),
+            prefix: prefix.to_owned(),
+            suffix: suffix.to_owned(),
             version: version.as_ref().split('.').map(|x| x.into()).collect(),
             download: download.as_ref().split('.').map(|x| x.into()).collect(),
         }
     }
     async fn last_version<T: AsRef<str>>(&self, path: T) -> Result<(Version, String), String> {
-        let url = self.prefix.clone() + path.as_ref();
+        let url = format!("{}{}{}", self.prefix, path.as_ref(), self.suffix);
         let request = surf::get(&url)
             .recv_bytes()
             .await
@@ -159,17 +178,17 @@ impl TheiaPluginAPI {
         let json: serde_json::Value = serde_json::from_slice(body).map_err(|e| e.to_string())?;
         let mut version = &json;
         for item in self.version.iter() {
-            version = match version.get(item) {
-                Some(x) => x,
-                None => return Err("not find version".into()),
-            };
+            version = version.get(item).ok_or("not find version")?;
+            if version.is_array() {
+                version = version.get(0).ok_or("not find version")?;
+            }
         }
         let mut download = &json;
         for item in self.download.iter() {
-            download = match download.get(item) {
-                Some(x) => x,
-                None => return Err("not find download".into()),
-            };
+            download = download.get(item).ok_or("not find download")?;
+            if download.is_array() {
+                download = download.get(0).ok_or("not find download")?;
+            }
         }
         let version = version.as_str().ok_or("version error")?;
         let version = version.parse().map_err(|e| format!("version error, {}", e))?;

@@ -60,11 +60,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     for (domain, table) in config {
         let plugin = match (
-            table.get("prefix").and_then(|x| x.as_str()),
+            table.get("regular").and_then(|x| x.as_str()),
             table.get("version").and_then(|x| x.as_str()),
             table.get("download").and_then(|x| x.as_str()),
         ) {
-            (Some(prefix), Some(version), Some(download)) => TheiaPlugin::new(prefix, version, download, &opt.target),
+            (Some(regular), Some(version), Some(download)) => TheiaPlugin::new(regular, version, download, &opt.target),
             _ => {
                 warn!("{}: missing information", domain);
                 continue;
