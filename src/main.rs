@@ -94,25 +94,22 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 }
 
 async fn upgrade(plugin: TheiaPlugin, name: String, path: String) -> Result<(), String> {
-    let prefix = format!("{}: ", name);
-
     let (version_old, version_new) = future::join(plugin.get_install_info(&name), plugin.get_last_version(path)).await;
 
-    let version_old = version_old.map_err(|e| prefix.clone() + &e)?;
-    let (version_new, download) = version_new.map_err(|e| prefix.clone() + &e)?;
+    let (version_old, (version_new, download)) = (version_old.ok(), version_new?);
 
     if version_old.as_ref() == Some(&version_new) {
-        debug!("{}latest {} is installed", prefix, version_new);
+        debug!("{}: latest {} is installed", name, version_new);
         return Ok(());
     }
 
     info!(
-        "{}{} {} from {}",
-        prefix,
+        "{}: {} {} from {}",
+        name,
         version_old.map_or("install".to_owned(), |x| format!("upgrade {} to", x)),
         version_new,
         download
     );
 
-    plugin.upgrade(name, download).await.map_err(|e| prefix.clone() + &e)
+    plugin.upgrade(name, download).await
 }
