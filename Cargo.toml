@@ -1,6 +1,6 @@
 [package]
 name = "theia_update_plugins"
-version = "0.3.1"
+version = "0.3.2"
 authors = ["Tice Cosmos <tice@139.com>"]
 edition = "2018"
 description = "check and update theia plugins"
@@ -10,12 +10,12 @@ readme = "README.md"
 [dependencies]
 async-std = "1.6"
 chrono = "0.4"
-env_logger = "0.7"
+env_logger = "0.8"
 futures = "0.3"
 log = "0.4"
-quick-xml = "0.18"
+quick-xml = "0.20"
 serde_json = "1.0"
-surf = { version = "2.0.0-alpha.5", default-features = false, features = ["native-client"] }
+surf = "2.0"
 structopt = "0.3"
 toml = "0.5"
 zip = "0.5"
