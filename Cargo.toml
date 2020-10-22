@@ -8,14 +8,15 @@ license = "MIT"
 readme = "README.md"
 
 [dependencies]
-async-std = "1.6"
 chrono = "0.4"
 env_logger = "0.8"
 futures = "0.3"
-log = "0.4"
 quick-xml = "0.20"
-serde_json = "1.0"
 surf = "2.0"
 structopt = "0.3"
 toml = "0.5"
 zip = "0.5"
+
+async-std = "1"
+log = "0"
+serde_json = "1"
